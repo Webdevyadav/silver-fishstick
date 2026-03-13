@@ -1,0 +1,115 @@
+name: triage_stuck_ros
+version: 1.0.0
+description: Analyzes roster files stuck in processing stages, identifies bottlenecks, and provides actionable recommendations for resolution
+author: RosterIQ System
+lastModified: 2024-01-20T00:00:00Z
+
+parameters:
+  - name: time_threshold_minutes
+    type: number
+    required: false
+    description: Minimum processing time to consider a file as stuck
+    defaultValue: 60
+  - name: market_segment
+    type: string
+    required: false
+    description: Filter analysis to specific market segment
+  - name: processing_stage
+    type: string
+    required: false
+    description: Filter analysis to specific processing stage
+
+steps:
+  - id: step_1
+    name: Identify Stuck Files
+    description: Query roster processing data to find files stuck in non-complete stages
+    type: query
+    preconditions:
+      - Database connection is established
+      - roster_processing_details table is accessible
+    postconditions:
+      - List of stuck files is retrieved
+      - Processing times are calculated
+    parameters:
+      sql: |
+        SELECT file_id, processing_stage, processing_time_minutes, 
+               retry_count, error_codes, final_status, submission_date
+        FROM roster_processing_details
+        WHERE processing_stage != 'complete'
+          AND processing_time_minutes > {time_threshold_minutes}
+        ORDER BY processing_time_minutes DESC
+        LIMIT 100
+    expectedDuration: 5000
+
+  - id: step_2
+    name: Analyze Bottlenecks
+    description: Group stuck files by processing stage to identify bottlenecks
+    type: analysis
+    preconditions:
+      - Stuck files data is available
+    postconditions:
+      - Bottleneck stages are identified
+      - Average processing times per stage are calculated
+    parameters:
+      sql: |
+        SELECT processing_stage, COUNT(*) as stuck_count,
+               AVG(processing_time_minutes) as avg_time,
+               MAX(processing_time_minutes) as max_time,
+               AVG(retry_count) as avg_retries
+        FROM roster_processing_details
+        WHERE processing_stage != 'complete'
+          AND processing_time_minutes > {time_threshold_minutes}
+        GROUP BY processing_stage
+        ORDER BY stuck_count DESC
+    expectedDuration: 3000
+
+  - id: step_3
+    name: Analyze Retry Patterns
+    description: Examine retry patterns and success rates
+    type: analysis
+    preconditions:
+      - Stuck files data is available
+    postconditions:
+      - Retry effectiveness is calculated
+      - Success rates per retry count are determined
+    parameters:
+      sql: |
+        SELECT retry_count, COUNT(*) as file_count,
+               AVG(processing_time_minutes) as avg_time,
+               SUM(CASE WHEN final_status = 'success' THEN 1 ELSE 0 END) as success_count
+        FROM roster_processing_details
+        WHERE processing_stage != 'complete'
+          AND processing_time_minutes > {time_threshold_minutes}
+        GROUP BY retry_count
+        ORDER BY retry_count
+    expectedDuration: 3000
+
+  - id: step_4
+    name: Generate Recommendations
+    description: Synthesize findings and generate actionable recommendations
+    type: analysis
+    preconditions:
+      - All analysis steps are complete
+    postconditions:
+      - Recommendations are generated
+      - Confidence scores are calculated
+    parameters: {}
+    expectedDuration: 2000
+
+expectedOutputs:
+  - name: stuck_files_count
+    type: number
+    description: Total number of files identified as stuck
+    format: json
+  - name: bottleneck_stages
+    type: array
+    description: List of processing stages with bottlenecks
+    format: json
+  - name: recommendations
+    type: array
+    description: Actionable recommendations for resolving stuck files
+    format: json
+  - name: confidence_score
+    type: number
+    description: Overall confidence in the analysis (0-1)
+    format: json

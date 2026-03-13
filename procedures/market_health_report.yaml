@@ -1,0 +1,128 @@
+name: market_health_report
+version: 1.0.0
+description: Comprehensive market-level operational health assessment with cross-dataset correlation and comparative benchmarking
+author: RosterIQ System
+lastModified: 2024-01-20T00:00:00Z
+
+parameters:
+  - name: markets
+    type: array
+    required: false
+    description: List of specific markets to analyze (analyzes all if not specified)
+  - name: time_period
+    type: string
+    required: false
+    description: Time period for analysis (e.g., '30days', '90days')
+    defaultValue: 90days
+  - name: health_threshold
+    type: number
+    required: false
+    description: Minimum health score to flag markets needing attention
+    defaultValue: 60
+
+steps:
+  - id: step_1
+    name: Retrieve Market Metrics
+    description: Get comprehensive market-level operational metrics
+    type: query
+    preconditions:
+      - Database connection is established
+      - aggregated_operational_metrics table is accessible
+    postconditions:
+      - Market metrics are retrieved
+      - All key performance indicators are available
+    parameters:
+      sql: |
+        SELECT market_id, month, total_files_received,
+               files_processed_successfully, average_processing_time,
+               error_rate_percentage, data_quality_score,
+               sla_compliance_percentage, provider_onboarding_rate
+        FROM aggregated_operational_metrics
+        ORDER BY month DESC
+        LIMIT 100
+    expectedDuration: 5000
+
+  - id: step_2
+    name: Correlate File-Level Data
+    description: Cross-reference with file-level processing data
+    type: correlation
+    preconditions:
+      - Market metrics are available
+      - roster_processing_details table is accessible
+    postconditions:
+      - Cross-dataset correlation is complete
+      - File-level patterns are identified
+    parameters:
+      sql: |
+        SELECT market_segment as market_id, COUNT(*) as file_count,
+               AVG(processing_time_minutes) as avg_processing_time,
+               SUM(CASE WHEN final_status = 'success' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate,
+               AVG((failed_records + rejected_records) * 100.0 / NULLIF(total_records, 0)) as error_rate
+        FROM roster_processing_details
+        GROUP BY market_segment
+    expectedDuration: 5000
+
+  - id: step_3
+    name: Calculate Health Scores
+    description: Compute comprehensive health scores for each market
+    type: analysis
+    preconditions:
+      - Market metrics are available
+      - Correlation data is available
+    postconditions:
+      - Health scores are calculated
+      - Markets are ranked by performance
+    parameters:
+      weights:
+        sla_compliance: 0.4
+        data_quality: 0.3
+        error_rate: 0.3
+    expectedDuration: 3000
+
+  - id: step_4
+    name: Identify Top and Bottom Performers
+    description: Rank markets and identify excellence and concern areas
+    type: analysis
+    preconditions:
+      - Health scores are calculated
+    postconditions:
+      - Top performers are identified
+      - Underperforming markets are flagged
+    parameters:
+      top_count: 3
+      bottom_count: 3
+    expectedDuration: 2000
+
+  - id: step_5
+    name: Generate Executive Summary
+    description: Create executive-level health summary with key insights
+    type: analysis
+    preconditions:
+      - All analysis steps are complete
+    postconditions:
+      - Executive summary is generated
+      - Recommendations are provided
+    parameters: {}
+    expectedDuration: 3000
+
+expectedOutputs:
+  - name: market_rankings
+    type: array
+    description: Markets ranked by health score
+    format: json
+  - name: top_performers
+    type: array
+    description: Top performing markets with best practices
+    format: json
+  - name: underperformers
+    type: array
+    description: Markets needing attention with improvement areas
+    format: json
+  - name: executive_summary
+    type: text
+    description: High-level summary for executive review
+    format: text
+  - name: recommendations
+    type: array
+    description: Strategic recommendations for market improvement
+    format: json

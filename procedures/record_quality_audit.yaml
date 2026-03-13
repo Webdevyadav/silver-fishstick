@@ -1,0 +1,118 @@
+name: record_quality_audit
+version: 1.0.0
+description: Examines data quality patterns and validation failures, distinguishing REJ_REC_CNT (data quality) from FAIL_REC_CNT (pipeline errors)
+author: RosterIQ System
+lastModified: 2024-01-20T00:00:00Z
+
+parameters:
+  - name: market_segment
+    type: string
+    required: false
+    description: Filter analysis to specific market segment
+  - name: provider_type
+    type: string
+    required: false
+    description: Filter analysis to specific provider type
+  - name: rejection_threshold
+    type: number
+    required: false
+    description: Minimum rejection rate percentage to flag
+    defaultValue: 5.0
+
+steps:
+  - id: step_1
+    name: Analyze Quality vs Pipeline Errors
+    description: Compare REJ_REC_CNT (data quality) with FAIL_REC_CNT (pipeline errors)
+    type: query
+    preconditions:
+      - Database connection is established
+      - roster_processing_details table is accessible
+    postconditions:
+      - Quality metrics are calculated
+      - Pipeline error metrics are calculated
+    parameters:
+      sql: |
+        SELECT market_segment, provider_type, COUNT(*) as total_files,
+               SUM(rejected_records) as total_rejected,
+               SUM(failed_records) as total_failed,
+               AVG(rejected_records * 100.0 / NULLIF(total_records, 0)) as avg_rejection_rate,
+               AVG(failed_records * 100.0 / NULLIF(total_records, 0)) as avg_failure_rate
+        FROM roster_processing_details
+        GROUP BY market_segment, provider_type
+        HAVING SUM(rejected_records) > 0
+        ORDER BY total_rejected DESC
+        LIMIT 50
+    expectedDuration: 5000
+
+  - id: step_2
+    name: Identify Validation Patterns
+    description: Detect common validation rule failures
+    type: analysis
+    preconditions:
+      - Quality data is available
+    postconditions:
+      - Validation patterns are identified
+      - Error code frequencies are calculated
+    parameters:
+      sql: |
+        SELECT error_codes, COUNT(*) as occurrence_count,
+               SUM(rejected_records) as total_rejected_records,
+               AVG(rejected_records * 100.0 / NULLIF(total_records, 0)) as avg_rejection_rate
+        FROM roster_processing_details
+        WHERE rejected_records > 0
+        GROUP BY error_codes
+        ORDER BY occurrence_count DESC
+        LIMIT 20
+    expectedDuration: 4000
+
+  - id: step_3
+    name: Trend Analysis
+    description: Analyze data quality trends over time
+    type: analysis
+    preconditions:
+      - Historical data is available
+    postconditions:
+      - Trends are identified
+      - Week-over-week changes are calculated
+    parameters:
+      sql: |
+        SELECT DATE_TRUNC('week', submission_date) as week,
+               COUNT(*) as file_count,
+               SUM(rejected_records) as rejected_count,
+               AVG(rejected_records * 100.0 / NULLIF(total_records, 0)) as rejection_rate
+        FROM roster_processing_details
+        WHERE rejected_records > 0
+        GROUP BY DATE_TRUNC('week', submission_date)
+        ORDER BY week DESC
+        LIMIT 12
+    expectedDuration: 4000
+
+  - id: step_4
+    name: Generate Quality Recommendations
+    description: Create targeted recommendations for data quality improvement
+    type: analysis
+    preconditions:
+      - All analysis steps are complete
+    postconditions:
+      - Recommendations are generated
+      - Confidence scores are calculated
+    parameters: {}
+    expectedDuration: 2000
+
+expectedOutputs:
+  - name: quality_issues
+    type: array
+    description: List of data quality issues by market and provider type
+    format: json
+  - name: validation_patterns
+    type: array
+    description: Common validation failure patterns
+    format: json
+  - name: trends
+    type: array
+    description: Data quality trends over time
+    format: json
+  - name: recommendations
+    type: array
+    description: Actionable recommendations for quality improvement
+    format: json

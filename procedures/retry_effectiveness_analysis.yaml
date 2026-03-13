@@ -1,0 +1,136 @@
+name: retry_effectiveness_analysis
+version: 1.0.0
+description: Analyzes retry operation success rates, patterns, and cost-benefit to optimize retry strategies
+author: RosterIQ System
+lastModified: 2024-01-20T00:00:00Z
+
+parameters:
+  - name: max_retry_count
+    type: number
+    required: false
+    description: Maximum retry count to analyze
+    defaultValue: 5
+  - name: success_threshold
+    type: number
+    required: false
+    description: Minimum success rate percentage to consider retry effective
+    defaultValue: 50.0
+  - name: time_period
+    type: string
+    required: false
+    description: Time period for analysis
+    defaultValue: 30days
+
+steps:
+  - id: step_1
+    name: Analyze Retry Success Rates
+    description: Calculate success rates by retry count
+    type: query
+    preconditions:
+      - Database connection is established
+      - roster_processing_details table is accessible
+    postconditions:
+      - Success rates per retry count are calculated
+      - Processing times are analyzed
+    parameters:
+      sql: |
+        SELECT retry_count, COUNT(*) as total_files,
+               SUM(CASE WHEN final_status = 'success' THEN 1 ELSE 0 END) as successful_files,
+               SUM(CASE WHEN final_status = 'failed' THEN 1 ELSE 0 END) as failed_files,
+               AVG(processing_time_minutes) as avg_processing_time,
+               AVG(CASE WHEN final_status = 'success' THEN processing_time_minutes END) as avg_success_time,
+               AVG(CASE WHEN final_status = 'failed' THEN processing_time_minutes END) as avg_failure_time
+        FROM roster_processing_details
+        WHERE retry_count > 0
+        GROUP BY retry_count
+        ORDER BY retry_count
+    expectedDuration: 5000
+
+  - id: step_2
+    name: Analyze Retry by Error Type
+    description: Examine retry effectiveness for different error types
+    type: analysis
+    preconditions:
+      - Retry data is available
+    postconditions:
+      - Error-specific retry patterns are identified
+      - Success rates per error type are calculated
+    parameters:
+      sql: |
+        SELECT error_codes, AVG(retry_count) as avg_retries,
+               COUNT(*) as file_count,
+               SUM(CASE WHEN final_status = 'success' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate,
+               AVG(processing_time_minutes) as avg_time
+        FROM roster_processing_details
+        WHERE retry_count > 0
+        GROUP BY error_codes
+        ORDER BY file_count DESC
+        LIMIT 20
+    expectedDuration: 4000
+
+  - id: step_3
+    name: Cost-Benefit Analysis
+    description: Calculate cost-benefit of retry strategy vs manual intervention
+    type: analysis
+    preconditions:
+      - Retry data is available
+    postconditions:
+      - Total retry costs are calculated
+      - ROI of retry strategy is determined
+    parameters:
+      sql: |
+        SELECT 
+          SUM(CASE WHEN retry_count = 0 THEN processing_time_minutes ELSE 0 END) as no_retry_time,
+          SUM(CASE WHEN retry_count > 0 THEN processing_time_minutes ELSE 0 END) as retry_time,
+          COUNT(CASE WHEN retry_count = 0 THEN 1 END) as no_retry_count,
+          COUNT(CASE WHEN retry_count > 0 THEN 1 END) as retry_count_total,
+          SUM(CASE WHEN retry_count > 0 AND final_status = 'success' THEN 1 ELSE 0 END) as retry_success_count
+        FROM roster_processing_details
+    expectedDuration: 4000
+
+  - id: step_4
+    name: Identify Diminishing Returns
+    description: Detect retry counts where effectiveness drops significantly
+    type: analysis
+    preconditions:
+      - Success rate data is available
+    postconditions:
+      - Diminishing return thresholds are identified
+      - Manual intervention recommendations are generated
+    parameters:
+      diminishing_return_threshold: 30.0
+    expectedDuration: 3000
+
+  - id: step_5
+    name: Generate Optimization Recommendations
+    description: Create recommendations for retry strategy optimization
+    type: analysis
+    preconditions:
+      - All analysis steps are complete
+    postconditions:
+      - Optimization recommendations are generated
+      - Confidence scores are calculated
+    parameters: {}
+    expectedDuration: 2000
+
+expectedOutputs:
+  - name: retry_effectiveness
+    type: array
+    description: Success rates and metrics by retry count
+    format: json
+  - name: error_patterns
+    type: array
+    description: Retry effectiveness by error type
+    format: json
+  - name: cost_benefit
+    type: object
+    description: Cost-benefit analysis of retry strategy
+    format: json
+  - name: optimization_recommendations
+    type: array
+    description: Recommendations for retry strategy optimization
+    format: json
+  - name: manual_intervention_threshold
+    type: number
+    description: Recommended retry count for manual intervention
+    format: json
