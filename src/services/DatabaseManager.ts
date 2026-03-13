@@ -4,32 +4,11 @@ import { logger } from '@/utils/logger';
 import path from 'path';
 import fs from 'fs/promises';
 
-export interface ConnectionPoolStats {
-  activeConnections: number;
-  totalConnections: number;
-  waitingRequests: number;
-  totalQueries: number;
-  averageQueryTime: number;
-}
-
 export class DatabaseManager {
   private static instance: DatabaseManager;
   private duckdb: Database | null = null;
   private sqlite: sqlite3.Database | null = null;
   private initialized = false;
-  
-  // Connection pool configuration
-  private maxConnections = parseInt(process.env.DB_MAX_CONNECTIONS || '10');
-  private activeConnections = 0;
-  private queryQueue: Array<() => void> = [];
-  
-  // Performance monitoring
-  private queryStats = {
-    totalQueries: 0,
-    totalExecutionTime: 0,
-    slowQueries: [] as Array<{ sql: string; time: number; timestamp: Date }>
-  };
-  private slowQueryThreshold = 5000; // 5 seconds
 
   private constructor() {}
 
@@ -164,165 +143,30 @@ export class DatabaseManager {
     return this.sqlite;
   }
 
-  /**
-   * Execute DuckDB query with connection pooling and performance monitoring
-   */
   public async executeDuckDBQuery(sql: string, params: any[] = []): Promise<any[]> {
-    const startTime = Date.now();
-    
-    // Wait for available connection
-    await this.acquireConnection();
-    
-    try {
-      const result = await new Promise<any[]>((resolve, reject) => {
-        this.getDuckDB().all(sql, params, (err, rows) => {
-          if (err) {
-            logger.error('DuckDB query error:', err);
-            reject(err);
-          } else {
-            resolve(rows);
-          }
-        });
+    return new Promise((resolve, reject) => {
+      this.getDuckDB().all(sql, params, (err, rows) => {
+        if (err) {
+          logger.error('DuckDB query error:', err);
+          reject(err);
+        } else {
+          resolve(rows);
+        }
       });
-      
-      // Track performance
-      const executionTime = Date.now() - startTime;
-      this.trackQueryPerformance(sql, executionTime);
-      
-      return result;
-    } finally {
-      this.releaseConnection();
-    }
-  }
-
-  /**
-   * Execute SQLite query with connection pooling and performance monitoring
-   */
-  public async executeSQLiteQuery(sql: string, params: any[] = []): Promise<any[]> {
-    const startTime = Date.now();
-    
-    // Wait for available connection
-    await this.acquireConnection();
-    
-    try {
-      const result = await new Promise<any[]>((resolve, reject) => {
-        this.getSQLite().all(sql, params, (err, rows) => {
-          if (err) {
-            logger.error('SQLite query error:', err);
-            reject(err);
-          } else {
-            resolve(rows);
-          }
-        });
-      });
-      
-      // Track performance
-      const executionTime = Date.now() - startTime;
-      this.trackQueryPerformance(sql, executionTime);
-      
-      return result;
-    } finally {
-      this.releaseConnection();
-    }
-  }
-
-  /**
-   * Acquire connection from pool
-   */
-  private async acquireConnection(): Promise<void> {
-    if (this.activeConnections < this.maxConnections) {
-      this.activeConnections++;
-      return;
-    }
-    
-    // Wait in queue
-    return new Promise((resolve) => {
-      this.queryQueue.push(resolve);
     });
   }
 
-  /**
-   * Release connection back to pool
-   */
-  private releaseConnection(): void {
-    if (this.queryQueue.length > 0) {
-      const next = this.queryQueue.shift();
-      if (next) {
-        next();
-      }
-    } else {
-      this.activeConnections--;
-    }
-  }
-
-  /**
-   * Track query performance metrics
-   */
-  private trackQueryPerformance(sql: string, executionTime: number): void {
-    this.queryStats.totalQueries++;
-    this.queryStats.totalExecutionTime += executionTime;
-    
-    // Track slow queries
-    if (executionTime > this.slowQueryThreshold) {
-      this.queryStats.slowQueries.push({
-        sql: sql.substring(0, 200), // Truncate for logging
-        time: executionTime,
-        timestamp: new Date()
+  public async executeSQLiteQuery(sql: string, params: any[] = []): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      this.getSQLite().all(sql, params, (err, rows) => {
+        if (err) {
+          logger.error('SQLite query error:', err);
+          reject(err);
+        } else {
+          resolve(rows);
+        }
       });
-      
-      // Keep only last 100 slow queries
-      if (this.queryStats.slowQueries.length > 100) {
-        this.queryStats.slowQueries.shift();
-      }
-      
-      logger.warn('Slow query detected:', {
-        sql: sql.substring(0, 200),
-        executionTime,
-        threshold: this.slowQueryThreshold
-      });
-    }
-  }
-
-  /**
-   * Get connection pool statistics
-   */
-  public getPoolStats(): ConnectionPoolStats {
-    return {
-      activeConnections: this.activeConnections,
-      totalConnections: this.maxConnections,
-      waitingRequests: this.queryQueue.length,
-      totalQueries: this.queryStats.totalQueries,
-      averageQueryTime: this.queryStats.totalQueries > 0
-        ? this.queryStats.totalExecutionTime / this.queryStats.totalQueries
-        : 0
-    };
-  }
-
-  /**
-   * Get slow query log
-   */
-  public getSlowQueries(): Array<{ sql: string; time: number; timestamp: Date }> {
-    return [...this.queryStats.slowQueries];
-  }
-
-  /**
-   * Optimize query by adding hints and analyzing execution plan
-   */
-  public async optimizeQuery(sql: string): Promise<string> {
-    // Basic query optimization hints
-    let optimizedSql = sql;
-    
-    // Add LIMIT if not present for large result sets
-    if (!sql.toLowerCase().includes('limit') && sql.toLowerCase().includes('select')) {
-      logger.debug('Query optimization: Consider adding LIMIT clause');
-    }
-    
-    // Suggest indexes for WHERE clauses
-    if (sql.toLowerCase().includes('where')) {
-      logger.debug('Query optimization: Ensure indexes exist on WHERE clause columns');
-    }
-    
-    return optimizedSql;
+    });
   }
 
   public async close(): Promise<void> {

@@ -6,6 +6,49 @@ import { logger } from '@/utils/logger';
 
 const router = Router();
 
+/**
+ * @swagger
+ * /api/v1/health:
+ *   get:
+ *     summary: System health check
+ *     description: Checks the health status of all system components (DuckDB, SQLite, Redis)
+ *     tags: [Health]
+ *     responses:
+ *       200:
+ *         description: System is healthy or degraded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   enum: [healthy, degraded, unhealthy]
+ *                 timestamp:
+ *                   type: string
+ *                   format: date-time
+ *                 version:
+ *                   type: string
+ *                 services:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       name:
+ *                         type: string
+ *                       status:
+ *                         type: string
+ *                         enum: [healthy, degraded, unhealthy]
+ *                       responseTime:
+ *                         type: number
+ *                       lastCheck:
+ *                         type: string
+ *                         format: date-time
+ *                 uptime:
+ *                   type: number
+ *       503:
+ *         description: System is unhealthy
+ */
 router.get('/', async (req: Request, res: Response) => {
   const startTime = Date.now();
   const timestamp = new Date();
