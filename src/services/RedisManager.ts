@@ -21,21 +21,16 @@ export class RedisManager {
     }
 
     try {
-      const redisUrl = process.env['REDIS_URL'] || 'redis://localhost:6379';
-      const redisPassword = process.env['REDIS_PASSWORD'];
+      const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+      const redisPassword = process.env.REDIS_PASSWORD;
 
-      const clientOptions: any = {
+      this.client = createClient({
         url: redisUrl,
+        password: redisPassword,
         socket: {
-          reconnectStrategy: (retries: number) => Math.min(retries * 50, 500)
+          reconnectStrategy: (retries) => Math.min(retries * 50, 500)
         }
-      };
-
-      if (redisPassword) {
-        clientOptions.password = redisPassword;
-      }
-
-      this.client = createClient(clientOptions);
+      });
 
       this.client.on('error', (err) => {
         logger.error('Redis client error:', err);
@@ -104,11 +99,6 @@ export class RedisManager {
     const client = this.getClient();
     const result = await client.exists(key);
     return result === 1;
-  }
-
-  public async ping(): Promise<string> {
-    const client = this.getClient();
-    return await client.ping();
   }
 
   public async close(): Promise<void> {

@@ -3,7 +3,7 @@ import { queryRoutes } from './query';
 import { sessionRoutes } from './session';
 import { diagnosticRoutes } from './diagnostic';
 import { healthRoutes } from './health';
-import monitoringRoutes from './monitoring';
+import { monitoringRoutes } from './monitoring';
 
 const router = Router();
 

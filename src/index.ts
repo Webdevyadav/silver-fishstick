@@ -8,9 +8,13 @@ import { Server as SocketIOServer } from 'socket.io';
 
 import { logger } from '@/utils/logger';
 import { errorHandler } from '@/middleware/errorHandler';
+import { performanceTracking } from '@/middleware/performanceTracking';
 import { apiRoutes } from '@/api/routes';
 import { DatabaseManager } from '@/services/DatabaseManager';
 import { RedisManager } from '@/services/RedisManager';
+import { PerformanceMonitor } from '@/services/PerformanceMonitor';
+import { LoadBalancer } from '@/services/LoadBalancer';
+import { AutoScaler } from '@/services/AutoScaler';
 
 // Load environment variables
 dotenv.config();
@@ -32,6 +36,9 @@ app.use(cors());
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Performance tracking middleware
+app.use(performanceTracking);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -79,9 +86,30 @@ async function startServer() {
     await DatabaseManager.getInstance().initialize();
     await RedisManager.getInstance().initialize();
     
+    // Initialize performance monitoring
+    PerformanceMonitor.getInstance();
+    
+    // Initialize load balancer and auto-scaler
+    const loadBalancer = LoadBalancer.getInstance();
+    const autoScaler = AutoScaler.getInstance();
+    
+    // Register this instance with load balancer
+    const instanceId = process.env.INSTANCE_ID || `instance-${Date.now()}`;
+    await loadBalancer.registerInstance({
+      id: instanceId,
+      host: process.env.HOST || 'localhost',
+      port: parseInt(process.env.PORT || '3000'),
+      status: 'healthy',
+      activeConnections: 0,
+      maxConnections: parseInt(process.env.MAX_CONNECTIONS || '100'),
+      cpuUsage: 0,
+      memoryUsage: 0
+    });
+    
     server.listen(PORT, () => {
       logger.info(`RosterIQ AI Agent server running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      logger.info(`Instance ID: ${instanceId}`);
     });
   } catch (error) {
     logger.error('Failed to start server:', error);

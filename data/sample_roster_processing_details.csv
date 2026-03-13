@@ -1,0 +1,11 @@
+file_id,submission_date,market_segment,provider_type,total_records,processed_records,failed_records,rejected_records,processing_stage,error_codes,processing_time_minutes,retry_count,final_status
+RPF_2024_001,2024-01-15,commercial,primary_care,1250,1200,30,20,complete,"VAL_001,VAL_003",45,1,success
+RPF_2024_002,2024-01-15,medicare,specialist,890,850,25,15,complete,VAL_002,32,0,success
+RPF_2024_003,2024-01-16,medicaid,hospital,2100,1950,100,50,complete,"VAL_001,VAL_004,SYS_001",78,2,partial
+RPF_2024_004,2024-01-16,individual,ancillary,450,400,35,15,complete,VAL_003,28,1,success
+RPF_2024_005,2024-01-17,commercial,primary_care,1800,1650,120,30,complete,"VAL_001,VAL_002,SYS_002",95,3,partial
+RPF_2024_006,2024-01-17,medicare,hospital,3200,3100,80,20,complete,VAL_004,156,1,success
+RPF_2024_007,2024-01-18,medicaid,specialist,750,700,40,10,complete,"VAL_002,VAL_003",38,0,success
+RPF_2024_008,2024-01-18,commercial,ancillary,920,850,50,20,complete,VAL_001,42,1,success
+RPF_2024_009,2024-01-19,individual,primary_care,680,620,45,15,complete,"VAL_003,VAL_004",35,2,success
+RPF_2024_010,2024-01-19,medicare,specialist,1100,1000,80,20,complete,"VAL_002,SYS_001",58,1,success

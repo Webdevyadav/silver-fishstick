@@ -1,20 +1,37 @@
 import { Database } from 'duckdb';
 import sqlite3 from 'sqlite3';
 import { logger } from '@/utils/logger';
-import { SecurityManager } from './SecurityManager';
 import path from 'path';
 import fs from 'fs/promises';
+
+export interface ConnectionPoolStats {
+  activeConnections: number;
+  totalConnections: number;
+  waitingRequests: number;
+  totalQueries: number;
+  averageQueryTime: number;
+}
 
 export class DatabaseManager {
   private static instance: DatabaseManager;
   private duckdb: Database | null = null;
   private sqlite: sqlite3.Database | null = null;
-  private securityManager: SecurityManager;
   private initialized = false;
+  
+  // Connection pool configuration
+  private maxConnections = parseInt(process.env.DB_MAX_CONNECTIONS || '10');
+  private activeConnections = 0;
+  private queryQueue: Array<() => void> = [];
+  
+  // Performance monitoring
+  private queryStats = {
+    totalQueries: 0,
+    totalExecutionTime: 0,
+    slowQueries: [] as Array<{ sql: string; time: number; timestamp: Date }>
+  };
+  private slowQueryThreshold = 5000; // 5 seconds
 
-  private constructor() {
-    this.securityManager = SecurityManager.getInstance();
-  }
+  private constructor() {}
 
   public static getInstance(): DatabaseManager {
     if (!DatabaseManager.instance) {
@@ -29,11 +46,10 @@ export class DatabaseManager {
     }
 
     try {
-      await this.securityManager.initialize();
       await this.initializeDuckDB();
       await this.initializeSQLite();
       this.initialized = true;
-      logger.info('Database connections initialized successfully with encryption');
+      logger.info('Database connections initialized successfully');
     } catch (error) {
       logger.error('Failed to initialize database connections:', error);
       throw error;
@@ -41,7 +57,7 @@ export class DatabaseManager {
   }
 
   private async initializeDuckDB(): Promise<void> {
-    const duckdbPath = process.env['DUCKDB_PATH'] || './data/analytics.duckdb';
+    const duckdbPath = process.env.DUCKDB_PATH || './data/analytics.duckdb';
     
     // Ensure data directory exists
     const dataDir = path.dirname(duckdbPath);
@@ -63,7 +79,7 @@ export class DatabaseManager {
     logger.info(`DuckDB initialized at ${duckdbPath}`);
   }
   private async initializeSQLite(): Promise<void> {
-    const sqlitePath = process.env['SQLITE_PATH'] || './data/episodic_memory.db';
+    const sqlitePath = process.env.SQLITE_PATH || './data/episodic_memory.db';
     
     // Ensure data directory exists
     const dataDir = path.dirname(sqlitePath);
@@ -83,13 +99,12 @@ export class DatabaseManager {
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
         timestamp DATETIME NOT NULL,
-        query_encrypted TEXT NOT NULL,
-        response_encrypted TEXT NOT NULL,
+        query TEXT NOT NULL,
+        response TEXT NOT NULL,
         confidence REAL NOT NULL,
         tools_used TEXT NOT NULL,
-        reasoning_encrypted TEXT NOT NULL,
+        reasoning TEXT NOT NULL,
         data_state_checksum TEXT NOT NULL,
-        encryption_key_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -98,12 +113,11 @@ export class DatabaseManager {
         session_id TEXT NOT NULL,
         type TEXT NOT NULL,
         category TEXT NOT NULL,
-        message_encrypted TEXT NOT NULL,
+        message TEXT NOT NULL,
         severity INTEGER NOT NULL,
         resolved BOOLEAN DEFAULT FALSE,
         source TEXT NOT NULL,
         timestamp DATETIME NOT NULL,
-        encryption_key_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -111,13 +125,12 @@ export class DatabaseManager {
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
         type TEXT NOT NULL,
-        description_encrypted TEXT NOT NULL,
+        description TEXT NOT NULL,
         affected_data TEXT NOT NULL,
         severity INTEGER NOT NULL,
-        previous_value_encrypted TEXT,
-        current_value_encrypted TEXT,
+        previous_value TEXT,
+        current_value TEXT,
         timestamp DATETIME NOT NULL,
-        encryption_key_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -151,156 +164,165 @@ export class DatabaseManager {
     return this.sqlite;
   }
 
+  /**
+   * Execute DuckDB query with connection pooling and performance monitoring
+   */
   public async executeDuckDBQuery(sql: string, params: any[] = []): Promise<any[]> {
-    return new Promise((resolve, reject) => {
-      this.getDuckDB().all(sql, params, (err, rows) => {
-        if (err) {
-          logger.error('DuckDB query error:', err);
-          reject(err);
-        } else {
-          resolve(rows);
-        }
+    const startTime = Date.now();
+    
+    // Wait for available connection
+    await this.acquireConnection();
+    
+    try {
+      const result = await new Promise<any[]>((resolve, reject) => {
+        this.getDuckDB().all(sql, params, (err, rows) => {
+          if (err) {
+            logger.error('DuckDB query error:', err);
+            reject(err);
+          } else {
+            resolve(rows);
+          }
+        });
       });
-    });
+      
+      // Track performance
+      const executionTime = Date.now() - startTime;
+      this.trackQueryPerformance(sql, executionTime);
+      
+      return result;
+    } finally {
+      this.releaseConnection();
+    }
   }
 
+  /**
+   * Execute SQLite query with connection pooling and performance monitoring
+   */
   public async executeSQLiteQuery(sql: string, params: any[] = []): Promise<any[]> {
-    return new Promise((resolve, reject) => {
-      this.getSQLite().all(sql, params, (err, rows) => {
-        if (err) {
-          logger.error('SQLite query error:', err);
-          reject(err);
-        } else {
-          resolve(rows);
-        }
+    const startTime = Date.now();
+    
+    // Wait for available connection
+    await this.acquireConnection();
+    
+    try {
+      const result = await new Promise<any[]>((resolve, reject) => {
+        this.getSQLite().all(sql, params, (err, rows) => {
+          if (err) {
+            logger.error('SQLite query error:', err);
+            reject(err);
+          } else {
+            resolve(rows);
+          }
+        });
       });
+      
+      // Track performance
+      const executionTime = Date.now() - startTime;
+      this.trackQueryPerformance(sql, executionTime);
+      
+      return result;
+    } finally {
+      this.releaseConnection();
+    }
+  }
+
+  /**
+   * Acquire connection from pool
+   */
+  private async acquireConnection(): Promise<void> {
+    if (this.activeConnections < this.maxConnections) {
+      this.activeConnections++;
+      return;
+    }
+    
+    // Wait in queue
+    return new Promise((resolve) => {
+      this.queryQueue.push(resolve);
     });
   }
 
   /**
-   * Execute SQLite query with automatic decryption of encrypted fields
+   * Release connection back to pool
    */
-  public async executeSQLiteQueryWithDecryption(sql: string, params: any[] = []): Promise<any[]> {
-    const rows = await this.executeSQLiteQuery(sql, params);
-    
-    // Decrypt encrypted fields in the results
-    return Promise.all(rows.map(async (row) => {
-      const decryptedRow = { ...row };
-      
-      // Decrypt common encrypted fields
-      if (row.query_encrypted && row.encryption_key_id) {
-        try {
-          const encryptedData = JSON.parse(row.query_encrypted);
-          const decryptedBuffer = await this.securityManager.decryptData(encryptedData);
-          decryptedRow.query = decryptedBuffer.toString('utf8');
-          delete decryptedRow.query_encrypted;
-        } catch (error) {
-          logger.warn('Failed to decrypt query field:', error);
-          decryptedRow.query = '[DECRYPTION_FAILED]';
-        }
+  private releaseConnection(): void {
+    if (this.queryQueue.length > 0) {
+      const next = this.queryQueue.shift();
+      if (next) {
+        next();
       }
-      
-      if (row.response_encrypted && row.encryption_key_id) {
-        try {
-          const encryptedData = JSON.parse(row.response_encrypted);
-          const decryptedBuffer = await this.securityManager.decryptData(encryptedData);
-          decryptedRow.response = decryptedBuffer.toString('utf8');
-          delete decryptedRow.response_encrypted;
-        } catch (error) {
-          logger.warn('Failed to decrypt response field:', error);
-          decryptedRow.response = '[DECRYPTION_FAILED]';
-        }
-      }
-      
-      if (row.reasoning_encrypted && row.encryption_key_id) {
-        try {
-          const encryptedData = JSON.parse(row.reasoning_encrypted);
-          const decryptedBuffer = await this.securityManager.decryptData(encryptedData);
-          decryptedRow.reasoning = decryptedBuffer.toString('utf8');
-          delete decryptedRow.reasoning_encrypted;
-        } catch (error) {
-          logger.warn('Failed to decrypt reasoning field:', error);
-          decryptedRow.reasoning = '[DECRYPTION_FAILED]';
-        }
-      }
-      
-      if (row.message_encrypted && row.encryption_key_id) {
-        try {
-          const encryptedData = JSON.parse(row.message_encrypted);
-          const decryptedBuffer = await this.securityManager.decryptData(encryptedData);
-          decryptedRow.message = decryptedBuffer.toString('utf8');
-          delete decryptedRow.message_encrypted;
-        } catch (error) {
-          logger.warn('Failed to decrypt message field:', error);
-          decryptedRow.message = '[DECRYPTION_FAILED]';
-        }
-      }
-      
-      if (row.description_encrypted && row.encryption_key_id) {
-        try {
-          const encryptedData = JSON.parse(row.description_encrypted);
-          const decryptedBuffer = await this.securityManager.decryptData(encryptedData);
-          decryptedRow.description = decryptedBuffer.toString('utf8');
-          delete decryptedRow.description_encrypted;
-        } catch (error) {
-          logger.warn('Failed to decrypt description field:', error);
-          decryptedRow.description = '[DECRYPTION_FAILED]';
-        }
-      }
-      
-      // Clean up encryption metadata from results
-      delete decryptedRow.encryption_key_id;
-      
-      return decryptedRow;
-    }));
+    } else {
+      this.activeConnections--;
+    }
   }
 
   /**
-   * Insert encrypted data into SQLite
+   * Track query performance metrics
    */
-  public async insertEncryptedData(
-    table: string,
-    data: Record<string, any>,
-    encryptedFields: string[]
-  ): Promise<void> {
-    const encryptedData = { ...data };
-    let encryptionKeyId: string | undefined;
-
-    // Encrypt specified fields
-    for (const field of encryptedFields) {
-      if (data[field] !== undefined) {
-        const encrypted = await this.securityManager.encryptData(
-          JSON.stringify(data[field]),
-          'data_encryption'
-        );
-        encryptedData[`${field}_encrypted`] = JSON.stringify(encrypted);
-        encryptionKeyId = encrypted.keyId;
-        delete encryptedData[field];
-      }
-    }
-
-    // Add encryption key ID
-    if (encryptionKeyId) {
-      encryptedData['encryption_key_id'] = encryptionKeyId;
-    }
-
-    // Build INSERT query
-    const columns = Object.keys(encryptedData);
-    const placeholders = columns.map(() => '?').join(', ');
-    const values = Object.values(encryptedData);
-
-    const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
+  private trackQueryPerformance(sql: string, executionTime: number): void {
+    this.queryStats.totalQueries++;
+    this.queryStats.totalExecutionTime += executionTime;
     
-    return new Promise<void>((resolve, reject) => {
-      this.getSQLite().run(sql, values, (err) => {
-        if (err) {
-          logger.error('Encrypted insert error:', err);
-          reject(err);
-        } else {
-          resolve();
-        }
+    // Track slow queries
+    if (executionTime > this.slowQueryThreshold) {
+      this.queryStats.slowQueries.push({
+        sql: sql.substring(0, 200), // Truncate for logging
+        time: executionTime,
+        timestamp: new Date()
       });
-    });
+      
+      // Keep only last 100 slow queries
+      if (this.queryStats.slowQueries.length > 100) {
+        this.queryStats.slowQueries.shift();
+      }
+      
+      logger.warn('Slow query detected:', {
+        sql: sql.substring(0, 200),
+        executionTime,
+        threshold: this.slowQueryThreshold
+      });
+    }
+  }
+
+  /**
+   * Get connection pool statistics
+   */
+  public getPoolStats(): ConnectionPoolStats {
+    return {
+      activeConnections: this.activeConnections,
+      totalConnections: this.maxConnections,
+      waitingRequests: this.queryQueue.length,
+      totalQueries: this.queryStats.totalQueries,
+      averageQueryTime: this.queryStats.totalQueries > 0
+        ? this.queryStats.totalExecutionTime / this.queryStats.totalQueries
+        : 0
+    };
+  }
+
+  /**
+   * Get slow query log
+   */
+  public getSlowQueries(): Array<{ sql: string; time: number; timestamp: Date }> {
+    return [...this.queryStats.slowQueries];
+  }
+
+  /**
+   * Optimize query by adding hints and analyzing execution plan
+   */
+  public async optimizeQuery(sql: string): Promise<string> {
+    // Basic query optimization hints
+    let optimizedSql = sql;
+    
+    // Add LIMIT if not present for large result sets
+    if (!sql.toLowerCase().includes('limit') && sql.toLowerCase().includes('select')) {
+      logger.debug('Query optimization: Consider adding LIMIT clause');
+    }
+    
+    // Suggest indexes for WHERE clauses
+    if (sql.toLowerCase().includes('where')) {
+      logger.debug('Query optimization: Ensure indexes exist on WHERE clause columns');
+    }
+    
+    return optimizedSql;
   }
 
   public async close(): Promise<void> {

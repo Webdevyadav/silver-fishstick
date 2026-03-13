@@ -1,0 +1,11 @@
+market_id,month,total_files_received,files_processed_successfully,average_processing_time,error_rate_percentage,top_error_categories,provider_onboarding_rate,data_quality_score,sla_compliance_percentage
+NY_COMM,2024-01,125,118,52.3,5.6,"VAL_001,VAL_003,SYS_001",87.5,92.1,94.2
+CA_MED,2024-01,98,92,48.7,6.1,"VAL_002,VAL_004",85.2,90.8,91.5
+TX_MCAID,2024-01,156,145,61.2,7.1,"VAL_001,VAL_002,SYS_002",82.1,88.9,89.3
+FL_IND,2024-01,87,82,45.8,5.7,"VAL_003,VAL_004",89.7,93.4,95.1
+NY_COMM,2023-12,132,125,54.1,5.3,"VAL_001,VAL_003",88.2,91.7,93.8
+CA_MED,2023-12,102,96,49.3,5.9,"VAL_002,SYS_001",86.1,91.2,92.1
+TX_MCAID,2023-12,148,138,59.8,6.8,"VAL_001,VAL_004",83.5,89.6,90.2
+FL_IND,2023-12,91,86,47.2,5.5,"VAL_003,VAL_002",90.1,94.1,95.8
+OH_COMM,2024-01,76,71,43.6,6.6,"VAL_001,SYS_002",84.2,87.9,88.7
+MI_MED,2024-01,89,84,51.4,5.6,"VAL_002,VAL_003",87.6,92.3,93.5
